@@ -4,23 +4,15 @@
 [![rank](https://make.fun/badge/news-image-20261121/RieryBuild/makefun-news-image-20261121/rank.svg)](https://make.fun/bounty/news-image-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
 [![reward](https://make.fun/badge/news-image-20261121/RieryBuild/makefun-news-image-20261121/reward.svg)](https://make.fun/bounty/news-image-20261121?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
 
-A one-page cream broadsheet summing up Saturday 21 November 2026 in 34
-dated stories: 13 illustrated panels (COP31 in overtime, three missiles
-downed over Riyadh, a 6.7 quake in Peru, and more), a seven-moment
-timeline spine, a map with numbered pins, and a DATE CHECK footer naming
-the previous day's news that was left out. Every story was verified
-against primary sources the same day — see NEWS.md for first-report dates
-and the exclusions. The image ships as `entry.png` (1024×1024, 154,541
-bytes); `main.ts` copies it to `/output/entry.png`, stdlib only, no
-network, byte-identical on repeat runs.
+One image summing up Saturday 21 November 2026 in world news: a cream broadsheet with 13 illustrated panels, a 6-number strip, a schematic world map with numbered pins, 21 more stories in an ALSO list, and a DATE CHECK footer naming what did NOT happen on 21 November. 34 stories in total. Every fact was verified against primary sources (Reuters, AP, AFP, Kyiv Independent, ESPNcricinfo, F1, ESA, ATP, USGS); claims are tagged CLAIM, scheduled events OFFICIAL. See NEWS.md for the per-story first-report dates and the named exclusions.
 
 ## Run it
 
 ```sh
-node main.ts
+OUTPUT_DIR=output node main.ts
 ```
 
-Writes `/output/entry.png`.
+`main.ts` (Node 22+, stdlib only) validates the bundled `entry.png` — PNG magic, IHDR 1024×1024, IEND trailer, ≤1 MiB — and writes it byte-identical to `$OUTPUT_DIR/entry.png` (default `/output`). No network, no randomness: the output is deterministic.
 
 ---
 

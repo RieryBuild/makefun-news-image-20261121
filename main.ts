@@ -1,58 +1,58 @@
-// makefun-news-image-20261121 — entry program, written fresh in-session.
-//
-// Copies the pre-rendered front page (entry.png, in this repo) to
-// /output/entry.png. Stdlib only, no network, deterministic: the same
-// input bytes always produce the same output bytes.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+// main.ts — news-image-20261121 round 2
+// Stdlib-only copy program: validates the bundled entry.png (PNG magic +
+// IHDR 1024x1024) and writes it byte-identical to $OUTPUT_DIR/entry.png
+// (default /output). No network, no randomness, no dependencies.
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = join(HERE, "entry.png");
-// Output directory: /output per the competition spec; OUTPUT_DIR overrides
-// it for local runs (e.g. OUTPUT_DIR=/tmp/out node main.ts).
-const OUT_DIR = process.env.OUTPUT_DIR || "/output";
-const DEST = join(OUT_DIR, "entry.png");
-const MAX_BYTES = 1024 * 1024;
-const MAX_SIDE = 1024;
-// PNG signature (8 bytes) + IHDR chunk: width at offset 16, height at 20.
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const EXPECTED_WIDTH = 1024;
+const EXPECTED_HEIGHT = 1024;
+const MAX_BYTES = 1024 * 1024;
 
-function sha256(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
-}
-
-function checkPng(path: string): { width: number; height: number } {
-  const buf = readFileSync(path);
-  if (buf.length < 24 || !buf.subarray(0, 8).equals(PNG_MAGIC)) {
-    console.error(`not a PNG file: ${path}`);
-    process.exit(1);
-  }
-  const width = buf.readUInt32BE(16);
-  const height = buf.readUInt32BE(20);
-  if (width > MAX_SIDE || height > MAX_SIDE) {
-    console.error(`image too large: ${width}x${height} (max ${MAX_SIDE}x${MAX_SIDE})`);
-    process.exit(1);
-  }
-  if (buf.length > MAX_BYTES) {
-    console.error(`image too large: ${buf.length} bytes (max ${MAX_BYTES})`);
-    process.exit(1);
-  }
-  return { width, height };
-}
-
-if (!existsSync(SRC)) {
-  console.error(`missing source image: ${SRC}`);
+function fail(message: string): never {
+  console.error(`main.ts: ${message}`);
   process.exit(1);
 }
-const { width, height } = checkPng(SRC);
-mkdirSync(OUT_DIR, { recursive: true });
-copyFileSync(SRC, DEST);
-const bytes = statSync(DEST).size;
-const hash = sha256(DEST);
-if (hash !== sha256(SRC)) {
-  console.error("copy mismatch: destination hash differs from source");
-  process.exit(1);
+
+const here = dirname(fileURLToPath(import.meta.url));
+const srcPath = join(here, "entry.png");
+const outDir = process.env.OUTPUT_DIR ?? "/output";
+const outPath = join(outDir, "entry.png");
+
+let bytes: Buffer;
+try {
+  bytes = readFileSync(srcPath);
+} catch {
+  fail(`cannot read ${srcPath}`);
 }
-console.log(`wrote ${DEST} (${width}x${height}, ${bytes} bytes, sha256 ${hash.slice(0, 16)}...)`);
+
+if (bytes.length < 33) fail("entry.png is too small to be a PNG");
+if (!bytes.subarray(0, 8).equals(PNG_MAGIC)) fail("entry.png: bad PNG magic");
+if (bytes.length > MAX_BYTES) fail(`entry.png is ${bytes.length} bytes, over the 1 MiB cap`);
+
+// IHDR: bytes 12-15 must be "IHDR"; width at 16-19, height at 20-23 (big-endian).
+if (bytes.subarray(12, 16).toString("latin1") !== "IHDR") {
+  fail("entry.png: first chunk is not IHDR");
+}
+if (bytes.readUInt32BE(8) !== 13) fail("entry.png: IHDR chunk length is not 13");
+const width = bytes.readUInt32BE(16);
+const height = bytes.readUInt32BE(20);
+if (width !== EXPECTED_WIDTH || height !== EXPECTED_HEIGHT) {
+  fail(`entry.png is ${width}x${height}, expected ${EXPECTED_WIDTH}x${EXPECTED_HEIGHT}`);
+}
+
+// IEND trailer: the last 12 bytes must be length 0 + "IEND" + CRC.
+const tail = bytes.subarray(bytes.length - 12);
+if (tail.readUInt32BE(0) !== 0 || tail.subarray(4, 8).toString("latin1") !== "IEND") {
+  fail("entry.png: missing IEND trailer — file is truncated");
+}
+
+try {
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(outPath, bytes);
+} catch (err) {
+  fail(`cannot write ${outPath}: ${(err as Error).message}`);
+}
+console.log(`wrote ${outPath} (${bytes.length} bytes, ${width}x${height})`);
