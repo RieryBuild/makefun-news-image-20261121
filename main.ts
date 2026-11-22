@@ -1,58 +1,49 @@
-// main.ts — news-image-20261121 round 2
-// Stdlib-only copy program: validates the bundled entry.png (PNG magic +
-// IHDR 1024x1024) and writes it byte-identical to $OUTPUT_DIR/entry.png
-// (default /output). No network, no randomness, no dependencies.
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+// main.ts — entry program for make.fun news-image-20261121 (round 3).
+// Copies the pre-rendered front page (entry.png, 1024x1024) to the output
+// directory after validating that it is a well-formed PNG of the right size.
+// Node 22, standard library only, no network, deterministic: the bytes
+// written are exactly the bytes of entry.png.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const EXPECTED_WIDTH = 1024;
-const EXPECTED_HEIGHT = 1024;
-const MAX_BYTES = 1024 * 1024;
 
-function fail(message: string): never {
-  console.error(`main.ts: ${message}`);
-  process.exit(1);
+const sourcePath = new URL("./entry.png", import.meta.url);
+const bytes = readFileSync(sourcePath);
+
+if (!bytes.subarray(0, 8).equals(PNG_MAGIC)) {
+  throw new Error("entry.png is not a PNG file (bad magic bytes)");
 }
-
-const here = dirname(fileURLToPath(import.meta.url));
-const srcPath = join(here, "entry.png");
-const outDir = process.env.OUTPUT_DIR ?? "/output";
-const outPath = join(outDir, "entry.png");
-
-let bytes: Buffer;
-try {
-  bytes = readFileSync(srcPath);
-} catch {
-  fail(`cannot read ${srcPath}`);
+if (bytes.toString("ascii", 12, 16) !== "IHDR") {
+  throw new Error("entry.png has no IHDR chunk where one is expected");
 }
-
-if (bytes.length < 33) fail("entry.png is too small to be a PNG");
-if (!bytes.subarray(0, 8).equals(PNG_MAGIC)) fail("entry.png: bad PNG magic");
-if (bytes.length > MAX_BYTES) fail(`entry.png is ${bytes.length} bytes, over the 1 MiB cap`);
-
-// IHDR: bytes 12-15 must be "IHDR"; width at 16-19, height at 20-23 (big-endian).
-if (bytes.subarray(12, 16).toString("latin1") !== "IHDR") {
-  fail("entry.png: first chunk is not IHDR");
+if (bytes.readUInt32BE(8) !== 13) {
+  throw new Error("entry.png has a malformed IHDR chunk (length must be 13)");
 }
-if (bytes.readUInt32BE(8) !== 13) fail("entry.png: IHDR chunk length is not 13");
+const bitDepth = bytes[24];
+const colorType = bytes[25];
+if (bitDepth !== 8 || colorType !== 2) {
+  throw new Error(
+    `entry.png must be 8-bit RGB (bit depth ${bitDepth}, colour type ${colorType})`,
+  );
+}
 const width = bytes.readUInt32BE(16);
 const height = bytes.readUInt32BE(20);
-if (width !== EXPECTED_WIDTH || height !== EXPECTED_HEIGHT) {
-  fail(`entry.png is ${width}x${height}, expected ${EXPECTED_WIDTH}x${EXPECTED_HEIGHT}`);
+if (width !== 1024 || height !== 1024) {
+  throw new Error(`entry.png must be 1024x1024, got ${width}x${height}`);
+}
+if (bytes.length > 1024 * 1024) {
+  throw new Error(`entry.png exceeds the 1 MiB cap (${bytes.length} bytes)`);
+}
+if (bytes.toString("ascii", bytes.length - 8, bytes.length - 4) !== "IEND") {
+  throw new Error("entry.png has no IEND trailer chunk (truncated file?)");
+}
+if (bytes.readUInt32BE(bytes.length - 12) !== 0) {
+  throw new Error("entry.png has a malformed IEND chunk (length must be 0)");
 }
 
-// IEND trailer: the last 12 bytes must be length 0 + "IEND" + CRC.
-const tail = bytes.subarray(bytes.length - 12);
-if (tail.readUInt32BE(0) !== 0 || tail.subarray(4, 8).toString("latin1") !== "IEND") {
-  fail("entry.png: missing IEND trailer — file is truncated");
-}
-
-try {
-  mkdirSync(outDir, { recursive: true });
-  writeFileSync(outPath, bytes);
-} catch (err) {
-  fail(`cannot write ${outPath}: ${(err as Error).message}`);
-}
-console.log(`wrote ${outPath} (${bytes.length} bytes, ${width}x${height})`);
+const outDir = resolve(process.env.OUTPUT_DIR ?? "/output");
+mkdirSync(outDir, { recursive: true });
+const target = join(outDir, "entry.png");
+writeFileSync(target, bytes);
+console.log(`wrote ${target} (${bytes.length} bytes)`);
