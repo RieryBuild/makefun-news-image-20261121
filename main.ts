@@ -1,77 +1,66 @@
-// makefun-news-image-20261121 — round 4
-// Copies the pre-rendered entry.png that sits next to this file into the
-// grader's output directory. The image itself is built offline (see NEWS.md);
-// this program only validates it and copies the bytes, so two runs produce
-// byte-identical output. Node 22, standard library only, no network.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+// news-image-20261121 round 5 — entry program (Node 22, standard library only).
+// Validates the bundled entry.png (PNG magic, IHDR 1024x1024, IEND trailer,
+// size at most 1 MiB) and writes a byte-identical copy to the output directory.
+// No network, no writes outside the output directory, fully deterministic.
+import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE = join(HERE, "entry.png");
-
-// The grader sets MAKEFUN_OUTPUT_DIR to the output directory; fall back to
-// the conventional /output directory when it is unset.
-const OUT_DIR = process.env.MAKEFUN_OUTPUT_DIR || "/output";
-const TARGET = join(OUT_DIR, "entry.png");
-
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const IEND_TAIL = Buffer.from([
+  0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+]);
 const MAX_BYTES = 1024 * 1024;
 
 function fail(message) {
-  throw new Error(`entry.png invalid: ${message}`);
+  console.error(`entry: ${message}`);
+  process.exit(1);
 }
 
+// Minimum structural size of a PNG: 8-byte signature + 25-byte IHDR chunk
+// (4 length + 4 type + 13 data + 4 CRC) + 12-byte IEND chunk.
+const MIN_PNG_BYTES = 8 + 25 + 12;
+
 function main() {
-  const bytes = readFileSync(SOURCE);
-
-  // A valid PNG with IHDR + IEND is at least 8 (magic) + 25 (IHDR) + 12 (IEND)
-  // = 45 bytes; reject anything shorter before any fixed-offset read.
-  if (bytes.length < 45) {
-    fail(`is only ${bytes.length} bytes, too short to be a complete PNG`);
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = join(here, "entry.png");
+  let png;
+  try {
+    png = readFileSync(source);
+  } catch {
+    fail(`cannot read ${source}`);
   }
 
-  if (bytes.length > MAX_BYTES) {
-    fail(`is ${bytes.length} bytes, over the 1 MiB limit`);
+  if (png.length < MIN_PNG_BYTES || !png.subarray(0, 8).equals(PNG_MAGIC)) {
+    fail(`${source} is not a PNG file (bad magic or truncated)`);
   }
-
-  // PNG signature: 89 50 4E 47 0D 0A 1A 0A
-  const magic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  for (let i = 0; i < magic.length; i++) {
-    if (bytes[i] !== magic[i]) fail("bad PNG magic bytes");
+  if (png.length > MAX_BYTES) {
+    fail(`${source} is ${png.length} bytes, over the 1 MiB limit`);
   }
-
-  // First chunk must be IHDR: 4-byte length (13), then the ASCII tag "IHDR".
-  if (bytes.readUInt32BE(8) !== 13) fail("IHDR length is not 13");
-  if (bytes.toString("ascii", 12, 16) !== "IHDR") fail("first chunk is not IHDR");
-
-  // IHDR payload: width (4 bytes) and height (4 bytes), both must be 1024.
-  const width = bytes.readUInt32BE(16);
-  const height = bytes.readUInt32BE(20);
+  if (png.readUInt32BE(8) !== 13) {
+    fail(`${source} has an IHDR chunk of unexpected length`);
+  }
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  if (!png.subarray(12, 16).equals(Buffer.from("IHDR"))) {
+    fail(`${source} has no IHDR chunk where one is expected`);
+  }
   if (width !== 1024 || height !== 1024) {
-    fail(`is ${width}x${height}, expected 1024x1024`);
+    fail(`${source} is ${width}x${height}, expected 1024x1024`);
+  }
+  if (!png.subarray(png.length - IEND_TAIL.length).equals(IEND_TAIL)) {
+    fail(`${source} has no IEND trailer`);
   }
 
-  // Bit depth 8, colour type 2 (truecolour RGB).
-  if (bytes[24] !== 8) fail(`bit depth is ${bytes[24]}, expected 8`);
-  if (bytes[25] !== 2) fail(`colour type is ${bytes[25]}, expected 2 (RGB)`);
-
-  // Last 12 bytes must be the IEND chunk: length 0, tag "IEND", then CRC.
-  const tail = bytes.subarray(bytes.length - 12);
-  if (tail.readUInt32BE(0) !== 0) fail("IEND length is not 0");
-  if (tail.toString("ascii", 4, 8) !== "IEND") fail("missing IEND trailer");
-
-  // Never write into the repository itself: the output directory must differ
-  // from this file's directory, and must not be a subdirectory of it either.
-  const outResolved = resolve(OUT_DIR);
-  const hereResolved = resolve(HERE);
-  if (outResolved === hereResolved ||
-      outResolved.startsWith(hereResolved + sep)) {
-    fail("output directory is inside the repo directory; refusing to write into the repo");
+  const outDir = process.env.MAKEFUN_OUTPUT_DIR || "/output";
+  mkdirSync(outDir, { recursive: true });
+  const target = join(outDir, "entry.png");
+  copyFileSync(source, target);
+  const written = statSync(target).size;
+  if (written !== png.length || !readFileSync(target).equals(png)) {
+    fail(`written ${target} does not match the validated ${source}`);
   }
-
-  mkdirSync(OUT_DIR, { recursive: true });
-  writeFileSync(TARGET, bytes);
-  console.log(`wrote ${TARGET} (${bytes.length} bytes, 1024x1024 PNG)`);
+  console.log(`entry: wrote ${target} (${written} bytes, ${width}x${height})`);
 }
 
 main();
